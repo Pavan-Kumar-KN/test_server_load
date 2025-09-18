@@ -343,9 +343,9 @@ const init = () => {
                 continue
             }
 
+            const filename = file.replace('.json', '')
             const isLegacy = filename.split('_', 1)[0] !== 'md'
             const sessionId = filename.substring(isLegacy ? 7 : 3)
-            const filename = file.replace('.json', '')
 
             createSession(sessionId, isLegacy)
         }
