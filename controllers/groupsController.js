@@ -13,7 +13,7 @@ const getList = (req, res) => {
 }
 
 const getAllGroups = async (req, res) => {
-    const session = getSession(res.locals.sessionId)
+    const session = await getSession(res.locals.sessionId)
 
     try {
         // This returns all groups where the user is participating
@@ -36,8 +36,10 @@ const getAllGroups = async (req, res) => {
             memberCount: group.participants.length
         }))
 
+        console.log("All groups fetched successfully for session:", res.locals.sessionId);
         response(res, 200, true, 'All group fetched successfully',  groupsList)
     } catch (error) {
+        console.error("Failed to fetch groups for session:", res.locals.sessionId, error);
         response(res, 500, false, 'Failed to fetch groups list')
     }
 }

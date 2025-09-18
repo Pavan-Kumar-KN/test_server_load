@@ -57,14 +57,20 @@ const status = (req, res) => {
     
 }
 
-const add = (req, res) => {
+const add = async (req, res) => {
     const { id, isLegacy } = req.body
 
-    if (isSessionExists(id)) {
+    console.log(id, isLegacy)
+
+    const exists = await isSessionExists(id);
+    
+    if (exists) {
         return response(res, 409, false, 'Session already exists, please use another id.')
     }
 
-    createSession(id, isLegacy === 'true', res)
+    console.log("\nCreating session...\n")
+
+    await createSession(id, isLegacy === 'true', res)
 }
 
 const del = async (req, res) => {

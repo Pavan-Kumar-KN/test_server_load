@@ -3,7 +3,7 @@ import { join } from 'path'
 import pino from 'pino'
 import makeWASocket, {
     useMultiFileAuthState,
-    makeInMemoryStore,
+    // makeInMemoryStore,
     Browsers,
     DisconnectReason,
     delay,
@@ -12,17 +12,58 @@ import { toDataURL } from 'qrcode'
 import __dirname from './dirname.js'
 import response from './response.js'
 import axios from 'axios';
-import { error } from 'console'
 
-const sessions = new Map()
+
+const sessions = new Map();
+
+// * help us to track which socket has to be closed
+const sessionTimers = new Map();
+
 const retries = new Map()
+const reconnectTimeouts = new Map()
+
+
+/* --- CLEANUP SESSION --- */
+function cleanupSession(sessionId) {
+    console.log(`🧹 Starting cleanup for session ${sessionId}`);
+
+    // Clear reconnection timeout if exists
+    if (reconnectTimeouts.has(sessionId)) {
+        clearTimeout(reconnectTimeouts.get(sessionId));
+        reconnectTimeouts.delete(sessionId);
+        console.log(`⏰ Cleared reconnection timeout for ${sessionId}`);
+    }
+
+    // Close the session
+    if (sessions.has(sessionId)) {
+        try {
+            const session = sessions.get(sessionId);
+            session.end?.(); // gracefully close
+        } catch (e) {
+            console.error(`❌ Error closing session ${sessionId}:`, e);
+        }
+        sessions.delete(sessionId);
+        console.log(`🗑️ Session ${sessionId} removed from memory`);
+    }
+
+    // Clear session timer
+    if (sessionTimers.has(sessionId)) {
+        clearTimeout(sessionTimers.get(sessionId));
+        sessionTimers.delete(sessionId);
+        console.log(`⏲️ Session timer cleared for ${sessionId}`);
+    }
+
+    // Clear retry count
+    retries.delete(sessionId);
+}
 
 const sessionsDir = (sessionId = '') => {
     return join(__dirname, 'sessions', sessionId ? sessionId : '')
 }
 
 const isSessionExists = (sessionId) => {
-    return sessions.has(sessionId)
+    const result = sessions.has(sessionId);
+    return result;
 }
 
 const shouldReconnect = (sessionId) => {
@@ -30,7 +71,7 @@ const shouldReconnect = (sessionId) => {
     let attempts = retries.get(sessionId) ?? 0
 
     maxRetries = maxRetries < 1 ? 1 : maxRetries
-
+    
     if (attempts < maxRetries) {
         ++attempts
 
@@ -47,7 +88,7 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
     const sessionFile = (isLegacy ? 'legacy_' : 'md_') + sessionId + (isLegacy ? '.json' : '')
 
     const logger = pino({ level: 'warn' })
-    const store = makeInMemoryStore({ logger })
+    // const store = makeInMemoryStore({ logger })
 
     let state, saveState
 
@@ -92,7 +133,7 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
     /**
      * @type {import('@adiwajshing/baileys').AnyWASocket}
      */
-    const wa = makeWASocket.default(waConfig)
+    const wa = makeWASocket.default(waConfig);
 
     if (!isLegacy) {
         try {
@@ -111,6 +152,7 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
     // sessions.set(sessionId, { ...wa, store, isLegacy })
 
     // * V2
+
     sessions.set(sessionId, { ...wa, isLegacy })
 
     wa.ev.on('creds.update', saveState)
@@ -169,6 +211,7 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
         if (connection === 'open') {
             retries.delete(sessionId);
 
+            resetCleanupTimer(sessionId);
         }
 
         if (connection === 'close') {
@@ -206,8 +249,6 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
             } catch {
             } finally {
                 deleteSession(sessionId, isLegacy);
-
-
             }
         }
 
@@ -216,13 +257,38 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
 }
 
 
+// Helper function to reset cleanup timer
+const resetCleanupTimer = (sessionId) => {
+    // Clear existing timer
+    if (sessionTimers.has(sessionId)) {
+        clearTimeout(sessionTimers.get(sessionId));
+    }
+
+    // Set new timer for 2 minutes
+    const timerId = setTimeout(() => {
+        console.log(`⏰ Session ${sessionId} inactive for 2 minutes, cleaning up`);
+        cleanupSession(sessionId);
+    }, 20000); // 2 minutes 2 * 60 * 1000)
+
+    sessionTimers.set(sessionId, timerId);
+}
+
 /**
  * @returns {(import('@adiwajshing/baileys').AnyWASocket|null)}
  */
-const getSession = (sessionId) => {
-    return sessions.get(sessionId) ?? null
-}
+const getSession = async (sessionId) => {
 
+    if (!sessions.has(sessionId)) {
+        console.log(`Rehydrating ${sessionId} from saved creds...`)
+        const newSession = await createSession(sessionId);  // Await the session creation
+        sessions.set(sessionId, newSession);
+    }
+
+    // Reset cleanup timer
+    resetCleanupTimer(sessionId);
+
+    return sessions.get(sessionId);
+}
 
 
 const deleteSession = (sessionId, isLegacy = false) => {
@@ -236,6 +302,7 @@ const deleteSession = (sessionId, isLegacy = false) => {
     sessions.delete(sessionId)
     retries.delete(sessionId)
 
+    cleanupSession(sessionId)
     // setDeviceStatus(sessionId, 0);
 }
 
