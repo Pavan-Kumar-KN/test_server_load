@@ -96,8 +96,9 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
 
     if (!isLegacy) {
         try {
-            store.readFromFile(sessionsDir(`${sessionId}_store.json`))
-            store.bind(wa.ev)
+            // store.readFromFile(sessionsDir(`${sessionId}_store.json`))
+            // store.bind(wa.ev)
+
 
         } catch (err) {
             console.error(`⚠️ Failed to read store for ${sessionId}, resetting...`, err)
@@ -106,15 +107,20 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
         }
     }
 
-    sessions.set(sessionId, { ...wa, store, isLegacy })
+    // * V1
+    // sessions.set(sessionId, { ...wa, store, isLegacy })
+
+    // * V2
+    sessions.set(sessionId, { ...wa, isLegacy })
 
     wa.ev.on('creds.update', saveState)
 
-    wa.ev.on('chats.set', ({ chats }) => {
-        if (isLegacy) {
-            store.chats.insertIfAbsent(...chats)
-        }
-    })
+
+    // wa.ev.on('chats.set', ({ chats }) => {
+    //     if (isLegacy) {
+    //         store.chats.insertIfAbsent(...chats)
+    //     }
+    // })
 
     // Automatically read incoming messages, uncomment below codes to enable this behaviour
 
@@ -233,12 +239,26 @@ const deleteSession = (sessionId, isLegacy = false) => {
     // setDeviceStatus(sessionId, 0);
 }
 
-const getChatList = (sessionId, isGroup = false) => {
+const getChatList = async (sessionId, isGroup = false) => {
     const filter = isGroup ? '@g.us' : '@s.whatsapp.net'
 
-    return getSession(sessionId).store.chats.filter((chat) => {
-        return chat.id.endsWith(filter)
-    })
+    const session = getSession(sessionId);
+    let data;
+
+    if (isGroup) {
+        data = Object.values(await session.groupFetchAllParticipating());
+        return data;
+    }
+
+
+    data = Object.values(await session.fetchChats());
+
+    return data;
+
+    // * V!
+    // return getSession(sessionId).store.chats.filter((chat) => {
+    //     return chat.id.endsWith(filter)
+    // })
 }
 
 /**
@@ -305,11 +325,11 @@ const formatGroup = (group) => {
 const cleanup = () => {
     console.log('Running cleanup before exit.')
 
-    sessions.forEach((session, sessionId) => {
-        if (!session.isLegacy) {
-            session.store.writeToFile(sessionsDir(`${sessionId}_store.json`))
-        }
-    })
+    // sessions.forEach((session, sessionId) => {
+    //     if (!session.isLegacy) {
+    //         session.store.writeToFile(sessionsDir(`${sessionId}_store.json`))
+    //     }
+    // })
 }
 
 const init = () => {
@@ -323,9 +343,9 @@ const init = () => {
                 continue
             }
 
-            const filename = file.replace('.json', '')
             const isLegacy = filename.split('_', 1)[0] !== 'md'
             const sessionId = filename.substring(isLegacy ? 7 : 3)
+            const filename = file.replace('.json', '')
 
             createSession(sessionId, isLegacy)
         }
