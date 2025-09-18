@@ -3,7 +3,6 @@ import { join } from 'path'
 import pino from 'pino'
 import makeWASocket, {
     useMultiFileAuthState,
-    // makeInMemoryStore,
     Browsers,
     DisconnectReason,
     delay,
@@ -38,6 +37,10 @@ function cleanupSession(sessionId) {
     if (sessions.has(sessionId)) {
         try {
             const session = sessions.get(sessionId);
+
+            // 1. Remove event listeners
+            session.ev.removeAllListeners();
+
             session.end?.(); // gracefully close
         } catch (e) {
             console.error(`❌ Error closing session ${sessionId}:`, e);
@@ -71,7 +74,7 @@ const shouldReconnect = (sessionId) => {
     let attempts = retries.get(sessionId) ?? 0
 
     maxRetries = maxRetries < 1 ? 1 : maxRetries
-    
+
     if (attempts < maxRetries) {
         ++attempts
 
@@ -254,6 +257,8 @@ const createSession = async (sessionId, isLegacy = false, res = null) => {
 
 
     })
+
+    return wa;
 }
 
 
@@ -276,19 +281,42 @@ const resetCleanupTimer = (sessionId) => {
 /**
  * @returns {(import('@adiwajshing/baileys').AnyWASocket|null)}
  */
-const getSession = async (sessionId) => {
 
+const getSession = async (sessionId) => {
     if (!sessions.has(sessionId)) {
-        console.log(`Rehydrating ${sessionId} from saved creds...`)
-        const newSession = await createSession(sessionId);  // Await the session creation
+        console.log(`Rehydrating ${sessionId} from saved creds...`);
+
+        // Create session
+        const newSession = await createSession(sessionId);
+
+        // Wait until connection is open
+        await new Promise((resolve, reject) => {
+            const onUpdate = (update) => {
+                if (update.connection === 'open') {
+                    newSession.ev.off('connection.update', onUpdate);
+                    resolve(true);
+                }
+                if (update.connection === 'close') {
+                    const code = update.lastDisconnect?.error?.output?.statusCode;
+                    if (code && code !== DisconnectReason.loggedOut) {
+                        // try reconnect logic if needed
+                        return;
+                    }
+                    newSession.ev.off('connection.update', onUpdate);
+                    reject(new Error('Connection closed before ready'));
+                }
+            };
+            newSession.ev.on('connection.update', onUpdate);
+        });
+
         sessions.set(sessionId, newSession);
     }
 
-    // Reset cleanup timer
     resetCleanupTimer(sessionId);
 
     return sessions.get(sessionId);
-}
+};
+
 
 
 const deleteSession = (sessionId, isLegacy = false) => {
